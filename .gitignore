@@ -1,2 +1,8 @@
 # Source directory
 src/
+# logs directory
+logs/
+# state files in notebooks directory
+notebooks/*.pt
+# src initial file
+src.zip
