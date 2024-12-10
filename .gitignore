@@ -1,5 +1,7 @@
 # Source directory
 src/
+# Processed data directory
+data/
 # logs directory
 logs/
 # state files in notebooks directory
