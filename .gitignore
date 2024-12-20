@@ -8,7 +8,7 @@ data/
 logs/
 
 # run directory
-run/
+runs/
 
 # models directory
 models/

@@ -397,7 +397,7 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
         optimizer : optimiseur pour entraîner le modèle.
     """
     optimizer_name = trial.suggest_categorical(
-        "optimizer", ["Adam", "SGD", "RMSprop", "Adagrad"]
+        "optimizer", ["Adam", "SGD", "RMSprop", "AdamW"]
     )
     learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
 
@@ -422,8 +422,8 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
                                                         steps_per_epoch=len_train_loader,
                                                         epochs=num_epochs,
                                                         )
-    elif optimizer_name == "Adagrad":
-        optimizer = optim.Adagrad(model_params, lr=learning_rate)
+    elif optimizer_name == "AdamW":
+        optimizer = optim.AdamW(model_params, lr=learning_rate)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
                                                         max_lr=learning_rate,
                                                         steps_per_epoch=len_train_loader,
@@ -431,3 +431,49 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
                                                         )
 
     return optimizer, scheduler
+
+
+class EarlyStoppingObject(object):
+    """
+    A class that implements early stopping during training.
+
+    Attributes:
+    ----------
+    patience : int
+        Number of cycles before stopping.
+    min_delta : 
+        Minimum difference to consider an improvement.
+    verbose : bool
+        Boolean for displaying messages.
+    counter : int       
+        Counter for cycles without improvement.
+    best_loss : float
+        Meilleure perte.
+    early_stop : bool 
+        Boolean qui declanche l'arrêt prématuré.
+
+    Methods:
+    -------
+        __call__ : méthode pour appeler l'objet.
+    """
+
+    def __init__(self, patience=5, min_delta=1, verbose=False):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.verbose = verbose
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.verbose:
+                print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
