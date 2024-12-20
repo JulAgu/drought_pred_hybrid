@@ -6,6 +6,10 @@ from tqdm import tqdm
 import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
+import torch
+from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+import torch.optim as optim
 
 def create_rawDataFrames(srcPath):
     """
@@ -122,7 +126,7 @@ def setup_encoders_targets():
 
 def load_XY(
     dfs,
-    df,
+    df_name,
     random_state=42,
     window_size=180, # how many days in the past (default/competition: 180)
     target_size=6, # how many weeks into the future (default/competition: 6)
@@ -139,7 +143,7 @@ def load_XY(
     ----------
     dfs : dict
         Dictionary containing the dataFrames.
-    df : pd.DataFrame
+    df_name : pd.DataFrame
         DataFrame to load the data from.
     random_state : int
         Random state to use.
@@ -164,10 +168,12 @@ def load_XY(
         The output array.
     fips : np.array
         The county identifier.
+    list_cat : list
+        The list of the number of unique categories in each categorical feature.
     """
 
     dico_trad = {}
-    df = dfs[df]
+    df = dfs[df_name]
     soil_df = dfs["soil"]
     for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7"]:
         dico_trad[cat] = {j: i for i,j in enumerate(sorted(soil_df[cat].unique()))}
@@ -251,6 +257,9 @@ def load_XY(
         results.append(y_past[:count])
     if return_fips:
         results.append(X_fips_date)
+    if df_name == "train":
+        list_cat = [dfs["soil"][cat].nunique() for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7"]]
+        results.append(list_cat)
     return results
 
 def normalize(X_static, X_time, y_past=None, dicts=({},{},{}), fit=False):
@@ -293,3 +302,132 @@ def normalize(X_static, X_time, y_past=None, dicts=({},{},{}), fit=False):
         return X_static, X_time, y_past, final_dict
     final_dict = (scaler_dict, scaler_dict_static, scaler_dict_past)
     return X_static, X_time, final_dict
+
+
+def load_dataFrames():
+    """
+    Load the dataframes.
+    """
+    dfs = {}
+    for file in os.listdir("data/processed_dataFrames"):
+        with open(f"data/processed_dataFrames/{file}", "rb") as f:
+            dfs[file.split(".")[0]] = pickle.load(f)
+    return dfs
+
+
+def create_dataLoader(X_static, X_static_cat, X_time, y_target, output_weeks, y_past=None, batch_size=128, shuffle=True):
+    """
+    Create the dataloaders.
+
+    Parameters
+    ----------
+    X_static : np.array
+        The static data.
+    X_static_cat : np.array
+        The static categorical data.
+    X_time : np.array
+        The time series data.
+    y_target : np.array
+        The target data.
+    output_weeks : int
+        The number of weeks into the future.
+    y_past : np.array
+        The past target data.
+    batch_size : int
+        The batch size.
+    shuffle : bool
+        Shuffle the data.
+    
+    Returns
+    -------
+    torch.utils.data.DataLoader instance
+        The dataloader.
+    """
+    X_static = torch.tensor(X_static).type(torch.FloatTensor)
+    X_static_cat = torch.tensor(X_static_cat).type(torch.LongTensor)
+    X_time = torch.tensor(X_time).type(torch.FloatTensor)
+    y_target = torch.tensor(y_target[:, :output_weeks]).type(torch.FloatTensor)
+    if y_past is not None:
+        y_past = torch.tensor(y_past).type(torch.FloatTensor)
+        dataset = torch.utils.data.TensorDataset(X_static, X_static_cat, X_time, y_target, y_past)
+    else:
+        dataset = torch.utils.data.TensorDataset(X_static, X_static_cat, X_time, y_target)
+    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
+
+def create_loss(trial):
+    """
+    Create a loss function for a model during an optuna hyperparameter optimization study.
+
+    Attributes
+    ----------
+        trial : optuna.Trial instance
+            An optuna trial.
+    
+    Returns
+    -------
+        criterion : nn.Module instance
+            loss function.
+    """
+    loss_name = trial.suggest_categorical("loss", ["MSELoss", "L1Loss", "HuberLoss"])
+
+    if loss_name == "MSELoss":
+        criterion = nn.MSELoss()
+    elif loss_name == "L1Loss":
+        criterion = nn.L1Loss()
+    elif loss_name == "HuberLoss":
+        criterion = nn.HuberLoss()
+    return criterion
+
+
+def create_scheduler(trial, model_params, len_train_loader, num_epochs):
+    """
+    create a scheduler for a model during an optuna hyperparameter optimization study.
+
+    Attributes
+    ----------
+        trial : optuna.Trial instance
+            An optuna trial.
+
+        model_params : torch.nn.Module.parameters instance
+            The model parameters.
+    
+    Returns
+    -------
+        optimizer : optimiseur pour entraîner le modèle.
+    """
+    optimizer_name = trial.suggest_categorical(
+        "optimizer", ["Adam", "SGD", "RMSprop", "Adagrad"]
+    )
+    learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
+
+    if optimizer_name == "Adam":
+        optimizer = optim.Adam(model_params, lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+                                                        max_lr=learning_rate,
+                                                        steps_per_epoch=len_train_loader,
+                                                        epochs=num_epochs,
+                                                        )
+    elif optimizer_name == "SGD":
+        optimizer = optim.SGD(model_params, lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+                                                        max_lr=learning_rate,
+                                                        steps_per_epoch=len_train_loader,
+                                                        epochs=num_epochs,
+                                                        )
+    elif optimizer_name == "RMSprop":
+        optimizer = optim.RMSprop(model_params, lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+                                                        max_lr=learning_rate,
+                                                        steps_per_epoch=len_train_loader,
+                                                        epochs=num_epochs,
+                                                        )
+    elif optimizer_name == "Adagrad":
+        optimizer = optim.Adagrad(model_params, lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+                                                        max_lr=learning_rate,
+                                                        steps_per_epoch=len_train_loader,
+                                                        epochs=num_epochs,
+                                                        )
+
+    return optimizer, scheduler
