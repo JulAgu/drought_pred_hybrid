@@ -31,3 +31,6 @@ __pycache__/
 # sqlite3 databases
 *.sqlite3
 
+# The "chest" were I store pictures, notes and other stuff that I don't want to commit
+chest/
+

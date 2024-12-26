@@ -79,6 +79,7 @@ def objective(trial):
 
     writer=SummaryWriter(f'{ROOT_TENSORBOARD}{model_name}/')
     valid_loss_min=np.inf
+    f1_macro_for_the_min_loss=0
     early_stopping = utilities.EarlyStoppingObject(patience=early_stop_patience,
                                                    min_delta=early_stop_min_delta,
                                                    verbose=False,
@@ -122,11 +123,12 @@ def objective(trial):
                         for pred in output:
                             preds.append([int(p.round()) for p in pred])
                             raw_preds.append([float(p) for p in pred])
-                        
+                       
                     labels=np.array(labels)
                     preds=np.clip(np.array(preds), 0, 5)
                     raw_labels=np.array(raw_labels)
                     raw_preds=np.array(raw_preds)
+                    f1_macro=f1_score(labels.flatten(), preds.flatten(), average="macro")
 
                     for i in range(output_weeks):
                         log_dict={
@@ -150,10 +152,12 @@ def objective(trial):
                         )
                         print(log_dict)
                         writer.add_scalars("Loss(MSE)", {'train': loss,
-                                                        'validation': log_dict[f"{w}validation_loss"]},
+                                                         'validation': log_dict[f"{w}validation_loss"]
+                                                         },
                                                         counter)
                         writer.add_scalars("F1(MSE)", {'macro': log_dict[f"{w}macro_f1"],
-                                                    'micro': log_dict[f"{w}micro_f1"]},
+                                                       'micro': log_dict[f"{w}micro_f1"]
+                                                       },
                                                     counter)
                         writer.add_scalar("MAE", log_dict[f"{w}mae"],
                                         counter)
@@ -172,12 +176,13 @@ def objective(trial):
                             )
                         )
                         valid_loss_min=np.mean(val_losses)
+                        f1_macro_for_the_min_loss=f1_macro
 
         early_stopping(valid_loss_min)
         if early_stopping.early_stop:
             print("Early stopping triggered")
             break
-    return valid_loss_min                    
+    return (valid_loss_min/f1_macro_for_the_min_loss)                    
 
 
 def optimize():
@@ -194,7 +199,7 @@ def optimize():
         study_name="MH_Hyper",
         direction="minimize",
     )
-    study.optimize(objective, n_trials=100)  # Adjust the number of trials as needed
+    study.optimize(objective, n_trials=30)  # Adjust the number of trials as needed
     print("\n")
     print("Best trial:")
     trial=study.best_trial
