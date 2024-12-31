@@ -394,7 +394,9 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
     
     Returns
     -------
-        optimizer : optimiseur pour entraîner le modèle.
+        optimizer
+
+        scheduler
     """
     optimizer_name = trial.suggest_categorical(
         "optimizer", ["Adam", "SGD", "RMSprop", "AdamW"]
