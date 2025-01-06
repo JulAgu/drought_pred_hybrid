@@ -40,46 +40,59 @@ class HybridModel(nn.Module):
         num_fc_tabular_layers,
         num_fc_combined_layers,
         output_size,
+        ablation_TS=False,
+        ablation_tabular=False,
+        ablation_attention=False,
+        ablation_embedding=False, # TODO: add ablation for embeddings, for this it is necessary to review the data loading process...
     ):
         super(HybridModel, self).__init__()
-
-        # Embeddings for categorical variables
-        self.embeddings = nn.ModuleList(
-            [
-                nn.Embedding(num_embeddings=i, embedding_dim=embedding_dims)
-                for i in list_unic_cat
-            ]
-        )
-
-        total_embedding_dim = num_categorical_features * embedding_dims
-
-        # Tabular part: dinamic creation of layers
-        tabular_fc_layers = []
-        input_size = total_embedding_dim + num_numerical_features
-        for _ in range(num_fc_tabular_layers):
-            tabular_fc_layers.append(nn.Linear(input_size, 128))
-            tabular_fc_layers.append(nn.ReLU())
-            input_size = 128
-        self.tabular_fc_layers = nn.Sequential(
-            *tabular_fc_layers, nn.Linear(128, 64), nn.ReLU()
-        )
-
-        # Temporal series
-        self.lstm = nn.LSTM(
-            input_size=num_time_series_features,
-            hidden_size=hidden_size,
-            num_layers=num_lstm_layers,
-            batch_first=True,
-        )
-
-        # Atenttion
-        self.attention = nn.Linear(hidden_size, 1)
         
-        self.dropout = nn.Dropout(dropout)
+        self.ablation_tabular = ablation_tabular
+        self.ablation_TS = ablation_TS
+        self.ablation_attention = ablation_attention
+
+        if not self.ablation_tabular:
+            # Embeddings for categorical variables
+            self.embeddings = nn.ModuleList(
+                [
+                    nn.Embedding(num_embeddings=i, embedding_dim=embedding_dims)
+                    for i in list_unic_cat
+                ]
+            )
+
+            total_embedding_dim = num_categorical_features * embedding_dims
+
+            # Static data branch
+            tabular_fc_layers = []
+            input_size = total_embedding_dim + num_numerical_features
+            for _ in range(num_fc_tabular_layers):
+                tabular_fc_layers.append(nn.Linear(input_size, 128))
+                tabular_fc_layers.append(nn.ReLU())
+                input_size = 128
+            self.tabular_fc_layers = nn.Sequential(
+                *tabular_fc_layers, nn.Linear(128, 64), nn.ReLU()
+            )
+
+        if not self.ablation_TS:
+            # TS branch
+            self.lstm = nn.LSTM(
+                input_size=num_time_series_features,
+                hidden_size=hidden_size,
+                num_layers=num_lstm_layers,
+                batch_first=True,
+            )
+
+            # Atenttion
+            self.attention = nn.Linear(hidden_size, 1)
+            self.dropout = nn.Dropout(dropout)
+
         # Combined part
         self.fc_after_context = nn.Linear(hidden_size, 64)
         combined_fc_layers = []
-        input_dim = (64 + 64)  # Assuming 128 from tabular output and 64 from LSTM output after attention
+        if not self.ablation_tabular and not self.ablation_TS:
+            input_dim = 64 + 64  # Assuming 64 from tabular output and 64 from LSTM output after attention
+        else:
+            input_dim = 64
         for _ in range(num_fc_combined_layers):
             combined_fc_layers.append(nn.Linear(input_dim, 64))
             combined_fc_layers.append(nn.ReLU())
@@ -89,29 +102,39 @@ class HybridModel(nn.Module):
         )
 
     def forward(self, categorical_data, numerical_data, time_series_data):
-        # Embeddings for categorical data
-        embeddings = [
-            emb(categorical_data[:, i]) for i, emb in enumerate(self.embeddings)
-        ]
-        x_cat = torch.cat(embeddings, dim=1)
+        if not self.ablation_tabular:
+            # Embeddings for categorical data
+            embeddings = [
+                emb(categorical_data[:, i]) for i, emb in enumerate(self.embeddings)
+            ]
+            x_cat = torch.cat(embeddings, dim=1)
 
-        # Concatenate categorical and numerical data
-        x_tabular = torch.cat((x_cat, numerical_data), dim=1)
+            # Concatenate categorical and numerical data
+            x_tabular = torch.cat((x_cat, numerical_data), dim=1)
 
-        # Pass the tabular data through FC layers
-        x1 = self.tabular_fc_layers(x_tabular)
+            # Pass the tabular data through FC layers
+            x1 = self.tabular_fc_layers(x_tabular)
+        if not self.ablation_TS:
+            # Pass the time series data through the LSTM
+            lstm_out, (hn, cn) = self.lstm(time_series_data)
+            # Pass the data through the attention mechanism
+            if not self.ablation_attention:
+                attention_weights = torch.softmax(self.attention(lstm_out), dim=1)
+                context_vector = torch.sum(attention_weights * lstm_out, dim=1)
+                droped_out = self.dropout(context_vector)
 
-        # Pass the time series data through the LSTM
-        lstm_out, (hn, cn) = self.lstm(time_series_data)
-        # Pass the data through the attention mechanism
-        attention_weights = torch.softmax(self.attention(lstm_out), dim=1)
-        context_vector = torch.sum(attention_weights * lstm_out, dim=1)
-        droped_out = self.dropout(context_vector)
-
-        x2 = torch.relu(self.fc_after_context(droped_out))
+                x2 = torch.relu(self.fc_after_context(droped_out))
+            else:
+                droped_out = self.dropout(lstm_out[:, -1, :])
+                x2 = torch.relu(self.fc_after_context(droped_out))
 
         # Concatenate the outputs from the tabular and the temporal data and pass it through FC layers
-        x = torch.cat((x1, x2), dim=1)
-        x = self.combined_fc_layers(x)
+        if not self.ablation_tabular and not self.ablation_TS:
+            x = torch.cat((x1, x2), dim=1)
+        elif not self.ablation_tabular:
+            x = x1
+        else:
+            x = x2
 
+        x = self.combined_fc_layers(x)
         return x

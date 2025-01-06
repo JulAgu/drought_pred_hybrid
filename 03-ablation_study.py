@@ -10,13 +10,12 @@ from tqdm import tqdm
 import models
 import utilities
 
-EXPE_NAME = "MH_Hyper_2Losses"
+EXPE_NAME = "MH_Hybrid_Ablation_Tab"
 
-
-def objective(trial):
-    """
-    Fonction objectif pour Optuna.
-    """
+def ablation_study(ablation_tabular=False,
+                   ablation_TS=False,
+                   ablation_attention=False,
+                   etiquette="",):
     # set up the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -30,18 +29,16 @@ def objective(trial):
     output_weeks = 6
     # Hyperparameters
     num_epochs_entire = 100
-    hidden_size = trial.suggest_int("hidden_size", 20, 600, step=20)
-    num_lstm_layers = trial.suggest_int("num_lstm_layers", 1, 10)
-    embedding_dims = trial.suggest_int("embedding_dims", 50, 300, step=10)
-    num_fc_tabular_layers = trial.suggest_int("num_fc_tabular_layers", 1, 5)
-    num_fc_combined_layers = trial.suggest_int("num_fc_combined_layers", 1, 5)
-    dropout = trial.suggest_float("dropout", 0.1, 0.6, step=0.1)
-    # Double loss parameters
-    alpha1 = trial.suggest_float("alpha1", 0, 0.1, step=0.1)
-    alpha2 = trial.suggest_float("alpha2", 0, 0.1, step=0.1) 
+    hidden_size = 340
+    num_lstm_layers = 8
+    embedding_dims = 270
+    num_fc_tabular_layers = 4 
+    num_fc_combined_layers = 1
+    dropout = 0.30000000000000004
     # early stop parameters
     early_stop_patience = 10
     early_stop_min_delta = 0.001
+    lr = 0.0008619228969896825
 
     # Load the data
     dfs = utilities.load_dataFrames()
@@ -66,8 +63,11 @@ def objective(trial):
         shuffle=False,
     )
 
+    len_train_loader = len(
+        train_loader
+    )  # This line is necessary for the scheduler creation.
     class2id, id2class = utilities.setup_encoders_targets()
-    model_name = f"{EXPE_NAME}_{trial.number}"
+    model_name = f"{EXPE_NAME}_{etiquette}"
     model = models.HybridModel(
         num_categorical_features=num_categorical_features,
         list_unic_cat=dfs["list_cat"],
@@ -80,6 +80,9 @@ def objective(trial):
         num_fc_tabular_layers=num_fc_tabular_layers,
         num_fc_combined_layers=num_fc_combined_layers,
         output_size=output_weeks,
+        ablation_TS=ablation_TS,
+        ablation_tabular=ablation_tabular,
+        ablation_attention=ablation_attention,
     )
     model.to(device)
 
@@ -92,9 +95,13 @@ def objective(trial):
         verbose=False,
     )
     counter = 0
-    criterion = utilities.create_loss(trial)
-    criterion_class = nn.L1Loss()
-    optimizer = utilities.create_optimizer(trial, model.parameters())
+    criterion = nn.HuberLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+                                                    max_lr=lr,
+                                                    steps_per_epoch=len_train_loader,
+                                                    epochs=num_epochs_entire,
+                                                    )
 
     for epoch in range(num_epochs_entire):
         for k, batch in tqdm(
@@ -110,13 +117,10 @@ def objective(trial):
             optimizer.zero_grad()
             output = model(X_static_cat, X_static, X_time)
 
-            loss1 = criterion(output, y_target)
-            rounded_output = torch.round(output)
-            rounded_y_target = torch.round(y_target)
-            loss2 = criterion_class(rounded_output, rounded_y_target)
-            loss = (alpha1 * loss1) + (alpha2 * loss2)
+            loss = criterion(output, y_target)
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             with torch.no_grad():
                 if k == len(train_loader) - 1 or k == (len(train_loader) - 1) // 2:
@@ -202,41 +206,12 @@ def objective(trial):
                             )
                         )
                         valid_loss_min = np.mean(val_losses)
-                        f1_macro_for_the_min_loss = f1_macro
 
         early_stopping(valid_loss_min)
         if early_stopping.early_stop:
             print("Early stopping triggered")
             break
-    return valid_loss_min / f1_macro_for_the_min_loss
-
-
-def optimize():
-    """
-    Fonction générique qui'enveloppe les expériences.
-    """
-    # # Optuna study
-    # # Uncomment when re-running the optimization to delete the previous study
-    # optuna.delete_study(
-    #     storage = "sqlite:///optim_cible.sqlite3",
-    #     study_name = "MH_Hyper_2Losses",
-    # )
-    study = optuna.create_study(
-        storage="sqlite:///optim_cible.sqlite3",
-        study_name="EXPE_NAME",
-        direction="minimize",
-    )
-    study.optimize(objective, n_trials=25)  # Adjust the number of trials as needed
-    print("\n")
-    print("Best trial:")
-    trial = study.best_trial
-    print("    Number: {}".format(trial.number))
-    print("    Value: {}".format(trial.value))
-
-    print("    Params: ")
-    for key, value in trial.params.items():
-        print("       {}: {}".format(key, value))
-
+    return valid_loss_min
 
 if __name__ == "__main__":
     # Fixing a seed to warrant the reproducibility
@@ -258,4 +233,22 @@ if __name__ == "__main__":
     os.makedirs(ROOT_TENSORBOARD, exist_ok=True)
     os.makedirs(ROOT_MODELS_WEIGHTS, exist_ok=True)
 
-    optimize()
+    # Define the ablation study
+    # no_TS = ablation_study(ablation_TS=True,
+    #                        etiquette="NO_TS"
+    #                        )
+    no_tab_no_att = ablation_study(ablation_tabular=True,
+                                   blation_attention=True,
+                                   etiquette="NO_tabular-NO_att"
+                                   )
+    
+    # no_tab = ablation_study(ablation_tabular=True,
+    #                         etiquette="NO_tabular") 
+    
+    # no_att = ablation_study(ablation_attention=True, etiquette="attention")
+
+    # print(f"no_TS_val_loss: {no_TS}")
+    print(f"no_tab_no_att_val_loss: {no_tab_no_att}")
+    # print(f"no_tab_val_loss: {no_tab}")
+    # print(f"no_att_val_loss: {no_att}")
+    

@@ -391,6 +391,12 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
 
         model_params : torch.nn.Module.parameters instance
             The model parameters.
+
+        len_train_loader : int
+            The length of the train loader.
+        
+        num_epochs : int
+            The number of epochs.
     
     Returns
     -------
@@ -434,6 +440,41 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
 
     return optimizer, scheduler
 
+def create_optimizer(trial, model_params):
+    """
+    create a optimizer for a model during an optuna hyperparameter optimization study.
+
+    Attributes
+    ----------
+        trial : optuna.Trial instance
+            An optuna trial.
+
+        model_params : torch.nn.Module.parameters instance
+            The model parameters.
+    
+    Returns
+    -------
+        optimizer
+    """
+    optimizer_name = trial.suggest_categorical(
+        "optimizer", ["Adam", "SGD", "RMSprop", "AdamW"]
+    )
+    learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
+
+    if optimizer_name == "Adam":
+        optimizer = optim.Adam(model_params, lr=learning_rate)
+
+    elif optimizer_name == "SGD":
+        optimizer = optim.SGD(model_params, lr=learning_rate)
+
+    elif optimizer_name == "RMSprop":
+        optimizer = optim.RMSprop(model_params, lr=learning_rate)
+    
+    elif optimizer_name == "AdamW":
+        optimizer = optim.AdamW(model_params, lr=learning_rate)
+
+    return optimizer
+
 
 class EarlyStoppingObject(object):
     """
@@ -452,11 +493,11 @@ class EarlyStoppingObject(object):
     best_loss : float
         Meilleure perte.
     early_stop : bool 
-        Boolean qui declanche l'arrêt prématuré.
+        Boolean for stopping the training.
 
     Methods:
     -------
-        __call__ : méthode pour appeler l'objet.
+        __call__ : method for calling the object.
     """
 
     def __init__(self, patience=5, min_delta=1, verbose=False):

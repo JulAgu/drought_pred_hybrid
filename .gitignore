@@ -4,8 +4,8 @@ src/
 # Processed data directory
 data/
 
-# logs directory
-logs/
+# notebook_logs directory
+notebook_logs/
 
 # run directory
 runs/
