@@ -10,9 +10,9 @@ from tqdm import tqdm
 import models
 import utilities
 
-EXPE_NAME = "MH_Hybrid_Ablation"
+EXPE_NAME = "MH_Hybrid_manual"
 
-def ablation_study(ablation_tabular=False,
+def one_train(ablation_tabular=False,
                    ablation_TS=False,
                    ablation_attention=False,
                    etiquette="",):
@@ -28,7 +28,7 @@ def ablation_study(ablation_tabular=False,
     batch_size = 128
     output_weeks = 6
     # Hyperparameters
-    num_epochs_entire = 100
+    num_epochs_entire = 20
     hidden_size = 340
     num_lstm_layers = 8
     embedding_dims = 270
@@ -38,7 +38,7 @@ def ablation_study(ablation_tabular=False,
     # early stop parameters
     early_stop_patience = 10
     early_stop_min_delta = 0.001
-    lr = 0.0008619228969896825
+    lr = 0.0005
 
     # Load the data
     dfs = utilities.load_dataFrames()
@@ -88,7 +88,6 @@ def ablation_study(ablation_tabular=False,
 
     writer = SummaryWriter(f"{ROOT_TENSORBOARD}{model_name}/")
     valid_loss_min = np.inf
-    f1_macro_for_the_min_loss = 0
     early_stopping = utilities.EarlyStoppingObject(
         patience=early_stop_patience,
         min_delta=early_stop_min_delta,
@@ -174,7 +173,7 @@ def ablation_study(ablation_tabular=False,
                         )
                         print(log_dict)
                         writer.add_scalars(
-                            "Loss(MSE)",
+                            "Loss(custom)",
                             {
                                 "train": loss,
                                 "validation": log_dict[f"{w}validation_loss"],
@@ -233,26 +232,4 @@ if __name__ == "__main__":
     os.makedirs(ROOT_TENSORBOARD, exist_ok=True)
     os.makedirs(ROOT_MODELS_WEIGHTS, exist_ok=True)
 
-    # Define the ablation study
-    entire = ablation_study(etiquette="entire")
-    no_TS = ablation_study(ablation_TS=True,
-                           etiquette="NO_TS"
-                           )
-    no_tab_no_att = ablation_study(ablation_tabular=True,
-                                   blation_attention=True,
-                                   etiquette="NO_tabular-NO_att",
-                                   )
-    
-    no_tab = ablation_study(ablation_tabular=True,
-                            etiquette="NO_tabular",
-                            )
-    
-    no_att = ablation_study(ablation_attention=True,
-                            etiquette="NO_attention"
-                            )
-    print(f"entire_val_loss: {entire}")
-    print(f"no_TS_val_loss: {no_TS}")
-    print(f"no_tab_no_att_val_loss: {no_tab_no_att}")
-    print(f"no_tab_val_loss: {no_tab}")
-    print(f"no_att_val_loss: {no_att}")
-    
+    no_tab_no_att = one_train(etiquette="just_a_test") 

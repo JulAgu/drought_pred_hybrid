@@ -17,6 +17,10 @@ def objective(trial):
     """
     Fonction objectif pour Optuna.
     """
+    # Fixing a seed at each iteration to warrant reproducibility
+    torch.manual_seed(21)
+    np.random.seed(21)
+    
     # set up the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -30,15 +34,15 @@ def objective(trial):
     output_weeks = 6
     # Hyperparameters
     num_epochs_entire = 100
-    hidden_size = trial.suggest_int("hidden_size", 20, 600, step=20)
+    hidden_size = trial.suggest_int("hidden_size", 100, 600, step=20)
     num_lstm_layers = trial.suggest_int("num_lstm_layers", 1, 10)
     embedding_dims = trial.suggest_int("embedding_dims", 50, 300, step=10)
     num_fc_tabular_layers = trial.suggest_int("num_fc_tabular_layers", 1, 5)
     num_fc_combined_layers = trial.suggest_int("num_fc_combined_layers", 1, 5)
-    dropout = trial.suggest_float("dropout", 0.1, 0.6, step=0.1)
+    dropout = trial.suggest_float("dropout", 0.2, 0.8, step=0.2)
     # Double loss parameters
-    alpha1 = trial.suggest_float("alpha1", 0, 0.1, step=0.1)
-    alpha2 = trial.suggest_float("alpha2", 0, 0.1, step=0.1) 
+    alpha1 = trial.suggest_float("alpha1", 0.4, 1, step=0.2)
+    alpha2 = trial.suggest_float("alpha2", 0.4, 1, step=0.2) 
     # early stop parameters
     early_stop_patience = 10
     early_stop_min_delta = 0.001
@@ -192,38 +196,38 @@ def objective(trial):
                         ):
                             log_dict[f"{w}{id2class[j]}_f1"] = f1
                         model.train()
+
                     if np.mean(val_losses) <= valid_loss_min:
                         torch.save(
                             model.state_dict(), f"{ROOT_MODELS_WEIGHTS}{model_name}.pt"
                         )
                         print(
-                            "Validation loss decreased ({:.6f} --> {:.6f}).  Saving model ...".format(
+                            "Validation loss/f1_macro decreased ({:.6f} --> {:.6f}).  Saving model ...".format(
                                 valid_loss_min, np.mean(val_losses)
                             )
                         )
                         valid_loss_min = np.mean(val_losses)
-                        f1_macro_for_the_min_loss = f1_macro
 
         early_stopping(valid_loss_min)
         if early_stopping.early_stop:
             print("Early stopping triggered")
             break
-    return valid_loss_min / f1_macro_for_the_min_loss
+    return valid_loss_min
 
 
 def optimize():
     """
     Fonction générique qui'enveloppe les expériences.
     """
-    # # Optuna study
-    # # Uncomment when re-running the optimization to delete the previous study
-    # optuna.delete_study(
-    #     storage = "sqlite:///optim_cible.sqlite3",
-    #     study_name = "MH_Hyper_2Losses",
-    # )
+    # Optuna study
+    # Uncomment when re-running the optimization to delete the previous study
+    optuna.delete_study(
+        storage = "sqlite:///optim_cible.sqlite3",
+        study_name = EXPE_NAME,
+    )
     study = optuna.create_study(
         storage="sqlite:///optim_cible.sqlite3",
-        study_name="EXPE_NAME",
+        study_name = EXPE_NAME,
         direction="minimize",
     )
     study.optimize(objective, n_trials=25)  # Adjust the number of trials as needed

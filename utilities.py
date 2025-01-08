@@ -464,14 +464,11 @@ def create_optimizer(trial, model_params):
     if optimizer_name == "Adam":
         optimizer = optim.Adam(model_params, lr=learning_rate)
 
-    elif optimizer_name == "SGD":
-        optimizer = optim.SGD(model_params, lr=learning_rate)
+    elif optimizer_name == "AdamW":
+        optimizer = optim.AdamW(model_params, lr=learning_rate)
 
     elif optimizer_name == "RMSprop":
         optimizer = optim.RMSprop(model_params, lr=learning_rate)
-    
-    elif optimizer_name == "AdamW":
-        optimizer = optim.AdamW(model_params, lr=learning_rate)
 
     return optimizer
 

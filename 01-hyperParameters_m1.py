@@ -17,6 +17,10 @@ def objective(trial):
     """
     Fonction objectif pour Optuna.
     """
+    # Fixing a seed at each iteration to warrant reproducibility
+    torch.manual_seed(21)
+    np.random.seed(21)
+
     # set up the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -239,10 +243,6 @@ def optimize():
 
 
 if __name__ == "__main__":
-    # Fixing a seed to warrant the reproducibility
-    torch.manual_seed(21)
-    np.random.seed(21)
-
     # Paths
     ROOT_RESULTS = f"results/{EXPE_NAME}/"
     ROOT_TENSORBOARD = f"runs/{EXPE_NAME}/"
