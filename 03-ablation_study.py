@@ -16,6 +16,11 @@ def ablation_study(ablation_tabular=False,
                    ablation_TS=False,
                    ablation_attention=False,
                    etiquette="",):
+    
+    # Fixing a seed to warrant the reproducibility
+    torch.manual_seed(33)
+    np.random.seed(33)
+
     # set up the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -28,7 +33,7 @@ def ablation_study(ablation_tabular=False,
     batch_size = 128
     output_weeks = 6
     # Hyperparameters
-    num_epochs_entire = 100
+    num_epochs_entire = 1
     hidden_size = 340
     num_lstm_layers = 8
     embedding_dims = 270
@@ -214,10 +219,6 @@ def ablation_study(ablation_tabular=False,
     return valid_loss_min
 
 if __name__ == "__main__":
-    # Fixing a seed to warrant the reproducibility
-    torch.manual_seed(21)
-    np.random.seed(21)
-
     # Paths
     ROOT_RESULTS = f"results/{EXPE_NAME}/"
     ROOT_TENSORBOARD = f"runs/{EXPE_NAME}/"
@@ -239,7 +240,7 @@ if __name__ == "__main__":
                            etiquette="NO_TS"
                            )
     no_tab_no_att = ablation_study(ablation_tabular=True,
-                                   blation_attention=True,
+                                   ablation_attention=True,
                                    etiquette="NO_tabular-NO_att",
                                    )
     
