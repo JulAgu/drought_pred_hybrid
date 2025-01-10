@@ -10,7 +10,7 @@ from tqdm import tqdm
 import models
 import utilities
 
-EXPE_NAME = "MH_Hybrid_manual"
+EXPE_NAME = "MH_Hybrid_2Outputs"
 
 def oneLoss_train(ablation_tabular=False,
                    ablation_TS=False,
@@ -34,7 +34,7 @@ def oneLoss_train(ablation_tabular=False,
     output_weeks = 6
     # Hyperparameters
     num_epochs_entire = 15
-    hidden_size = 340
+    hidden_size = 340 
     num_lstm_layers = 8
     embedding_dims = 270
     num_fc_tabular_layers = 4 
@@ -237,9 +237,9 @@ def twoLoss_train(ablation_tabular=False,
     output_weeks = 6
     # Hyperparameters
     num_epochs_entire = 15
-    hidden_size = 340
-    num_lstm_layers = 8
-    embedding_dims = 270
+    hidden_size = 1#340
+    num_lstm_layers = 1#8
+    embedding_dims = 10 #270
     num_fc_tabular_layers = 4 
     num_fc_combined_layers = 1
     dropout = 0.30000000000000004
@@ -327,7 +327,7 @@ def twoLoss_train(ablation_tabular=False,
 
             loss1 = criterion(output, y_target)
             loss2 = criterion2(output_cat, y_target.round().long())
-            loss = loss1 + 0.4*loss2
+            loss = 0.6*loss1 + 0.4*loss2
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -341,15 +341,17 @@ def twoLoss_train(ablation_tabular=False,
                     raw_preds = []
                     val_losses = []
                     val_losses2 = []
+                    val_losses_combined = []
                     for batch in valid_loader:
                         X_static_val, X_static_cat_val, X_time_val, y_target_val = [
                             data.to(device) for data in batch
                         ]
                         output, output_cat = model(X_static_cat_val, X_static_val, X_time_val)
                         val_loss = criterion(output, y_target_val)
-                        val_losses.append(val_loss.item())
                         val_loss2 = criterion2(output_cat, y_target_val.round().long())
+                        val_losses.append(val_loss.item())
                         val_losses2.append(val_loss2.item())
+                        val_losses_combined.append(0.6*val_loss.item() + 0.4*val_loss2.item())
                         for label in y_target_val:
                             labels.append([int(l.round()) for l in label])
                             raw_labels.append([float(l) for l in label])
@@ -358,11 +360,13 @@ def twoLoss_train(ablation_tabular=False,
                             preds.append(torch.max(pred_cat, 1)[1].cpu().numpy()) #[1] because the return of torch.max is a tuple where [0] is the max value and [1] is the index of the max value.                          
 
                     labels = np.array(labels)
-                    preds = np.clip(np.array(preds), 0, 5)
+                    preds = np.clip(preds, 0, 5)
                     raw_labels = np.array(raw_labels)
                     raw_preds = np.array(raw_preds)
 
                     for i in range(output_weeks):
+                        print(labels, preds)
+                        print(labels[:, i], preds[:, i])
                         log_dict = {
                             "loss": float(loss),
                             "Hubberloss": float(loss1),
@@ -374,7 +378,9 @@ def twoLoss_train(ablation_tabular=False,
                         }
                         # w = f'week_{i+1}_'
                         w = ""
-                        log_dict[f"{w}validation_loss"] = np.mean(val_losses)
+                        log_dict[f"{w}validation_Hubberloss"] = np.mean(val_losses)
+                        log_dict[f"{w}validation_crossEntropyLoss"] = np.mean(val_losses2)
+                        log_dict[f"{w}validation_combined_loss"] = np.mean(val_losses_combined)
                         log_dict[f"{w}macro_f1"] = f1_score(
                             labels[:, i], preds[:, i], average="macro"
                         )
@@ -386,15 +392,31 @@ def twoLoss_train(ablation_tabular=False,
                         )
                         print(log_dict)
                         writer.add_scalars(
-                            "Loss(custom)",
+                            "Loss",
                             {
                                 "train": loss,
-                                "validation": log_dict[f"{w}validation_loss"],
+                                "validation": log_dict[f"{w}validation_combined_loss"],
                             },
                             counter,
                         )
                         writer.add_scalars(
-                            "F1(MSE)",
+                            "HubberLoss",
+                            {
+                                "train": loss1,
+                                "validation": log_dict[f"{w}validation_Hubberloss"],
+                            },
+                            counter,
+                        )
+                        writer.add_scalars(
+                            "CrossEntropyLoss",
+                            {
+                                "train": loss2,
+                                "validation": log_dict[f"{w}validation_crossEntropyLoss"],
+                            },
+                            counter,
+                        )
+                        writer.add_scalars(
+                            "F1",
                             {
                                 "macro": log_dict[f"{w}macro_f1"],
                                 "micro": log_dict[f"{w}micro_f1"],
@@ -407,17 +429,17 @@ def twoLoss_train(ablation_tabular=False,
                             f1_score(labels[:, i], preds[:, i], average=None)
                         ):
                             log_dict[f"{w}{id2class[j]}_f1"] = f1
-                        model.train()
-                    if np.mean(val_losses) <= valid_loss_min:
+
+                    if np.mean(val_losses_combined) <= valid_loss_min:
                         torch.save(
                             model.state_dict(), f"{ROOT_MODELS_WEIGHTS}{model_name}.pt"
                         )
                         print(
                             "Validation loss decreased ({:.6f} --> {:.6f}).  Saving model ...".format(
-                                valid_loss_min, np.mean(val_losses)
+                                valid_loss_min, np.mean(val_losses_combined)
                             )
                         )
-                        valid_loss_min = np.mean(val_losses)
+                        valid_loss_min = np.mean(val_losses_combined)
 
         early_stopping(valid_loss_min)
         if early_stopping.early_stop:
@@ -443,7 +465,7 @@ if __name__ == "__main__":
     os.makedirs(ROOT_MODELS_WEIGHTS, exist_ok=True)
 
     twoLoss = twoLoss_train(etiquette="twoLoss")
-    oneLoss = oneLoss_train(etiquette="oneLoss")
+    # oneLoss = oneLoss_train(etiquette="oneLoss")
 
     print(f"twoLoss: {twoLoss}")
-    print(f"oneLoss: {oneLoss}")
+    # print(f"oneLoss: {oneLoss}")
