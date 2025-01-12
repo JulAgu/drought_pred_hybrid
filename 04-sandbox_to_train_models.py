@@ -12,11 +12,12 @@ import utilities
 
 EXPE_NAME = "MH_Hybrid_2Outputs"
 
+
 def oneLoss_train(ablation_tabular=False,
-                   ablation_TS=False,
-                   ablation_attention=False,
-                   etiquette="",):
-    
+                  ablation_TS=False,
+                  ablation_attention=False,
+                  etiquette="",):
+
     # Fixing a seed to warrant the reproducibility
     torch.manual_seed(21)
     np.random.seed(21)
@@ -37,7 +38,7 @@ def oneLoss_train(ablation_tabular=False,
     hidden_size = 340 
     num_lstm_layers = 8
     embedding_dims = 270
-    num_fc_tabular_layers = 4 
+    num_fc_tabular_layers = 4
     num_fc_combined_layers = 1
     dropout = 0.30000000000000004
     # early stop parameters
@@ -138,7 +139,9 @@ def oneLoss_train(ablation_tabular=False,
                         X_static_val, X_static_cat_val, X_time_val, y_target_val = [
                             data.to(device) for data in batch
                         ]
-                        output = model(X_static_cat_val, X_static_val, X_time_val)
+                        output = model(X_static_cat_val,
+                                       X_static_val,
+                                       X_time_val)
                         val_loss = criterion(output, y_target_val)
                         val_losses.append(val_loss.item())
                         for label in y_target_val:
@@ -216,10 +219,10 @@ def oneLoss_train(ablation_tabular=False,
 
 
 def twoLoss_train(ablation_tabular=False,
-                   ablation_TS=False,
-                   ablation_attention=False,
-                   etiquette="",):
-    
+                  ablation_TS=False,
+                  ablation_attention=False,
+                  etiquette="",):
+
     # Fixing a seed to warrant the reproducibility
     torch.manual_seed(21)
     np.random.seed(21)
@@ -327,7 +330,7 @@ def twoLoss_train(ablation_tabular=False,
 
             loss1 = criterion(output, y_target)
             loss2 = criterion2(output_cat, y_target.round().long())
-            loss = 0.6*loss1 + 0.4*loss2
+            loss = 0.99*loss1 + 0.001*loss2
             loss.backward()
             optimizer.step()
             scheduler.step()

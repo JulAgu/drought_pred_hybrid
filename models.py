@@ -270,7 +270,7 @@ class HybridModel_2Outputs(nn.Module):
             x = x2
 
         output_class = self.categories_output(x)
-        output_class = output_class.view(-1, self.output_size, 6)
+        output_class = output_class.view(-1, 6, self.output_size)
         output = self.combined_fc_layers(x)
 
         return output, output_class

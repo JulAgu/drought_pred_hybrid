@@ -363,7 +363,7 @@ def create_loss(trial):
     ----------
         trial : optuna.Trial instance
             An optuna trial.
-    
+
     Returns
     -------
         criterion : nn.Module instance
