@@ -130,6 +130,7 @@ def load_XY(
     random_state=42,
     window_size=180, # how many days in the past (default/competition: 180)
     target_size=6, # how many weeks into the future (default/competition: 6)
+    dict_trad=None, # dictionary containing the translation of the categorical features
     fuse_past=True, # add the past drought observations? (default: True)
     return_fips=False, # return the county identifier (do not use for predictions)
     encode_season=True, # encode the season using the function above (default: True) 
@@ -151,6 +152,8 @@ def load_XY(
         Number of days in the past used for prediction.
     target_size : int
         Number of weeks into the future (the size of the output vector).
+    dict_trad : dict
+        Dictionary containing the translation of the categorical features.
     fuse_past : bool
         Add the past drought observations.
     return_fips : bool
@@ -168,29 +171,41 @@ def load_XY(
         The output array.
     fips : np.array
         The county identifier.
+    dico_trad : dict
+        The dictionary containing the translation of the categorical features, only created when processing the training data.
     list_cat : list
         The list of the number of unique categories in each categorical feature.
     """
-
-    dico_trad = {}
     df = dfs[df_name]
-    soil_df = dfs["soil"]
-    for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7"]:
-        dico_trad[cat] = {j: i for i,j in enumerate(sorted(soil_df[cat].unique()))}
-        soil_df[cat] = soil_df[cat].map(dico_trad[cat])
+    soil_df = dfs["soil"].copy()
+    soil_df["original_fips"] = soil_df["fips"]
+
+    if df_name == "train":
+        dico_trad = {}
+        list_cat = [dfs["soil"][cat].nunique() + 1 for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7", "fips"]]
+        for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7", "fips"]:
+            dico_trad[cat] = {j: i for i,j in enumerate(sorted(soil_df[cat].unique()))}
+            dico_trad[cat]["Unknown"] = len(soil_df[cat].unique())
+            soil_df[cat] = soil_df[cat].apply(lambda x: dico_trad[cat][x] if x in dico_trad[cat] else dico_trad[cat]["Unknown"])
+    else:
+        dico_trad = dict_trad
+        for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7", "fips"]:
+            soil_df[cat] = soil_df[cat].apply(lambda x: dico_trad[cat][x] if x in dico_trad[cat] else dico_trad[cat]["Unknown"])
+
     time_data_cols = sorted(
         [c for c in df.columns if c not in ["fips", "date", "score"]]
     )
     static_data_cols = sorted(
-        [c for c in soil_df.columns if c not in ["fips", "lat", "lon",
+        [c for c in soil_df.columns if c not in ["lat", "lon",
                                                  "SQ1", "SQ2", "SQ3",
                                                  "SQ4", "SQ5", "SQ6",
-                                                 "SQ7"]]
+                                                 "SQ7", "fips",
+                                                 "original_fips"]]
     )
     static_cat_cols = sorted(
-        [c for c in soil_df.columns if c in ["SQ1", "SQ2", "SQ3",
-                                             "SQ4", "SQ5", "SQ6",
-                                             "SQ7"]]
+        [c for c in soil_df.columns if c in ["SQ1", "SQ2",
+                                             "SQ3", "SQ4", "SQ5",
+                                             "SQ6", "SQ7", "fips"]]
     )
 
     count = 0
@@ -222,8 +237,8 @@ def load_XY(
         fips_df = df[(df.index.get_level_values(0) == fips)]
         X = fips_df[time_data_cols].values
         y = fips_df["score"].values
-        X_s = soil_df[soil_df["fips"] == fips][static_data_cols].values[0]
-        X_s_cat = soil_df[soil_df["fips"] == fips][static_cat_cols].values[0]
+        X_s = soil_df.loc[soil_df["original_fips"] == fips, static_data_cols].values[0]
+        X_s_cat = soil_df.loc[soil_df["original_fips"] == fips, static_cat_cols].values[0]
         for i in range(start_i, len(y) - (window_size + target_size * 7), window_size):
             X_fips_date.append((fips, fips_df.index[i : i + window_size][-1]))
             X_time[count, :, : len(time_data_cols)] = X[i : i + window_size]
@@ -252,13 +267,14 @@ def load_XY(
             X_static_cat[count] = X_s_cat
             count += 1
     print(f"loaded {count} samples")
+
     results = [X_static[:count], X_static_cat[:count], X_time[:count], y_target[:count]]
     if not fuse_past:
         results.append(y_past[:count])
     if return_fips:
         results.append(X_fips_date)
     if df_name == "train":
-        list_cat = [dfs["soil"][cat].nunique() for cat in ["SQ1", "SQ2", "SQ3", "SQ4", "SQ5", "SQ6", "SQ7"]]
+        results.append(dico_trad)
         results.append(list_cat)
     return results
 
@@ -315,7 +331,7 @@ def load_dataFrames():
     return dfs
 
 
-def create_dataLoader(X_static, X_static_cat, X_time, y_target, output_weeks, y_past=None, batch_size=128, shuffle=True):
+def create_dataLoader(X_time, X_static, X_static_cat, y_target, output_weeks, y_past=None, batch_size=128, shuffle=True): #TODO: I just Change the order of the params, be careful with all the code writed before 17/01/2025
     """
     Create the dataloaders.
 
@@ -349,9 +365,9 @@ def create_dataLoader(X_static, X_static_cat, X_time, y_target, output_weeks, y_
     y_target = torch.tensor(y_target[:, :output_weeks]).type(torch.FloatTensor)
     if y_past is not None:
         y_past = torch.tensor(y_past).type(torch.FloatTensor)
-        dataset = torch.utils.data.TensorDataset(X_static, X_static_cat, X_time, y_target, y_past)
+        dataset = torch.utils.data.TensorDataset(X_time, X_static, X_static_cat, y_target, y_past)
     else:
-        dataset = torch.utils.data.TensorDataset(X_static, X_static_cat, X_time, y_target)
+        dataset = torch.utils.data.TensorDataset(X_time, X_static, X_static_cat, y_target)
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 

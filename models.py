@@ -29,7 +29,6 @@ class HybridModel(nn.Module):
 
     def __init__(
         self,
-        num_categorical_features,
         list_unic_cat,
         num_numerical_features,
         num_time_series_features,
@@ -50,27 +49,28 @@ class HybridModel(nn.Module):
         self.ablation_tabular = ablation_tabular
         self.ablation_TS = ablation_TS
         self.ablation_attention = ablation_attention
+        self.num_lstm_layers = num_lstm_layers
+        self.hidden_size = hidden_size
 
         if not self.ablation_tabular:
             # Embeddings for categorical variables
             self.embeddings = nn.ModuleList(
                 [
-                    nn.Embedding(num_embeddings=i, embedding_dim=embedding_dims)
-                    for i in list_unic_cat
+                    nn.Embedding(num_embeddings=i, embedding_dim=dimension)
+                    for i, dimension in zip(list_unic_cat, embedding_dims)
                 ]
             )
 
-            total_embedding_dim = num_categorical_features * embedding_dims
-
+            total_embedding_dim = int(sum(embedding_dims))
             # Static data branch
             tabular_fc_layers = []
             input_size = total_embedding_dim + num_numerical_features
             for _ in range(num_fc_tabular_layers):
-                tabular_fc_layers.append(nn.Linear(input_size, 128))
+                tabular_fc_layers.append(nn.Linear(input_size, 512))
                 tabular_fc_layers.append(nn.ReLU())
-                input_size = 128
+                input_size = 512
             self.tabular_fc_layers = nn.Sequential(
-                *tabular_fc_layers, nn.Linear(128, 64), nn.ReLU()
+                *tabular_fc_layers, nn.Linear(512, 256), nn.ReLU()
             )
 
         if not self.ablation_TS:
@@ -79,6 +79,7 @@ class HybridModel(nn.Module):
                 input_size=num_time_series_features,
                 hidden_size=hidden_size,
                 num_layers=num_lstm_layers,
+                dropout=dropout,
                 batch_first=True,
             )
 
@@ -87,28 +88,24 @@ class HybridModel(nn.Module):
             self.dropout = nn.Dropout(dropout)
 
         # Combined part
-        self.fc_after_context = nn.Linear(hidden_size, 64)
+        self.fc_after_context = nn.Linear(hidden_size, 256)
         combined_fc_layers = []
         if not self.ablation_tabular and not self.ablation_TS:
-            input_dim = 64 + 64  # Assuming 64 from tabular output and 64 from LSTM output after attention
+            input_dim = 256 + 256  # Assuming 64 from tabular output and 64 from LSTM output after attention
         else:
-            input_dim = 64
+            input_dim = 256
         for _ in range(num_fc_combined_layers):
-            combined_fc_layers.append(nn.Linear(input_dim, 64))
+            combined_fc_layers.append(nn.Linear(input_dim, 256))
             combined_fc_layers.append(nn.ReLU())
-            input_dim = 64
+            input_dim = 256
         self.combined_fc_layers = nn.Sequential(
-            *combined_fc_layers, nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, output_size)
+            *combined_fc_layers, nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, output_size)
         )
 
-    def forward(self, categorical_data, numerical_data, time_series_data):
-        numerical_data = numerical_data.to(torch.float32)
-        time_series_data = time_series_data.to(torch.float32)
+    def forward(self, numerical_data, categorical_data, time_series_data, hidden):
         if not self.ablation_tabular:
             # Embeddings for categorical data
-            embeddings = [
-                emb(categorical_data[:, i]) for i, emb in enumerate(self.embeddings)
-            ]
+            embeddings = [emb(categorical_data[:, i]) for i, emb in enumerate(self.embeddings)]
             x_cat = torch.cat(embeddings, dim=1)
 
             # Concatenate categorical and numerical data
@@ -118,7 +115,7 @@ class HybridModel(nn.Module):
             x1 = self.tabular_fc_layers(x_tabular)
         if not self.ablation_TS:
             # Pass the time series data through the LSTM
-            lstm_out, (hn, cn) = self.lstm(time_series_data)
+            lstm_out, hidden = self.lstm(time_series_data, hidden)
             # Pass the data through the attention mechanism
             if not self.ablation_attention:
                 attention_weights = torch.softmax(self.attention(lstm_out), dim=1)
@@ -139,7 +136,16 @@ class HybridModel(nn.Module):
             x = x2
 
         x = self.combined_fc_layers(x)
-        return x
+        return x, hidden
+
+
+    def init_hidden(self, batch_size, device="cuda"):
+        weight = next(self.lstm.parameters()).data
+        hidden = (
+            weight.new(self.num_lstm_layers, batch_size, self.hidden_size).zero_().to(device),
+            weight.new(self.num_lstm_layers, batch_size, self.hidden_size).zero_().to(device),
+        )
+        return hidden
     
 
 class HybridModel_2Outputs(nn.Module):
@@ -270,7 +276,205 @@ class HybridModel_2Outputs(nn.Module):
             x = x2
 
         output_class = self.categories_output(x)
-        output_class = output_class.view(-1, 6, self.output_size)
+        output_class = output_class.view(-1, 6, self.output_size,)
         output = self.combined_fc_layers(x)
 
         return output, output_class
+
+class HybridModel_2Outputs_noEmbbedings(nn.Module):
+    """
+    Like HybridModel_2Outputs but without embeddings for categorical variables and including clip_norm for the gradients and dropout. 
+
+    """
+
+    def __init__(
+        self,
+        num_numerical_features,
+        num_time_series_features,
+        hidden_size,
+        num_lstm_layers,
+        dropout,
+        num_fc_tabular_layers,
+        num_fc_combined_layers,
+        output_size,
+        ablation_TS=False,
+        ablation_tabular=False,
+        ablation_attention=False,
+    ):
+        super(HybridModel_2Outputs_noEmbbedings, self).__init__()
+        self.output_size = output_size
+        self.ablation_tabular = ablation_tabular
+        self.ablation_TS = ablation_TS
+        self.ablation_attention = ablation_attention
+
+        if not self.ablation_tabular:
+
+            # Static data branch
+            tabular_fc_layers = []
+            input_size = num_numerical_features
+            for _ in range(num_fc_tabular_layers):
+                tabular_fc_layers.append(nn.Linear(input_size, 128))
+                tabular_fc_layers.append(nn.ReLU())
+                input_size = 128
+            self.tabular_fc_layers = nn.Sequential(
+                *tabular_fc_layers, nn.Linear(128, 64), nn.ReLU()
+            )
+
+        if not self.ablation_TS:
+            # TS branch
+            self.lstm = nn.LSTM(
+                input_size=num_time_series_features,
+                hidden_size=hidden_size,
+                num_layers=num_lstm_layers,
+                dropout=dropout,
+                batch_first=True,
+            )
+
+            # Atenttion
+            self.attention = nn.Linear(hidden_size, 1)
+            self.dropout = nn.Dropout(dropout)
+
+        # Combined part
+        self.fc_after_context = nn.Linear(hidden_size, 64)
+        combined_fc_layers = []
+        if not self.ablation_tabular and not self.ablation_TS:
+            input_dim = 64 + 64  # Assuming 64 from tabular output and 64 from LSTM output after attention
+        else:
+            input_dim = 64
+        tmp_input_dim = input_dim
+        for _ in range(num_fc_combined_layers):
+            combined_fc_layers.append(nn.Linear(tmp_input_dim, 64))
+            combined_fc_layers.append(nn.ReLU())
+            tmp_input_dim = 64
+        self.combined_fc_layers = nn.Sequential(
+            *combined_fc_layers, nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, self.output_size)
+        )
+
+        self.categories_output = nn.Sequential(
+            nn.Linear(input_dim, 64), nn.ReLU(), nn.Linear(64, self.output_size*6)
+        )
+
+
+    def forward(self, time_series_data, numerical_data):
+        numerical_data = numerical_data.to(torch.float32)
+        time_series_data = time_series_data.to(torch.float32)
+        if not self.ablation_tabular:
+            x1 = self.tabular_fc_layers(numerical_data)
+        if not self.ablation_TS:
+            # Pass the time series data through the LSTM
+            lstm_out, (hn, cn) = self.lstm(time_series_data)
+            # Pass the data through the attention mechanism
+            if not self.ablation_attention:
+                attention_weights = torch.softmax(self.attention(lstm_out), dim=1)
+                context_vector = torch.sum(attention_weights * lstm_out, dim=1)
+            else:
+                context_vector = lstm_out[:, -1, :]  # Last time step output
+            
+            droped_out = self.dropout(context_vector)
+            x2 = torch.relu(self.fc_after_context(droped_out))
+
+        # Concatenate the outputs from the tabular and the temporal data and pass it through FC layers
+        if not self.ablation_tabular and not self.ablation_TS:
+            x = torch.cat((x1, x2), dim=1)
+        elif not self.ablation_tabular:
+            x = x1
+        else:
+            x = x2
+
+        output_class = self.categories_output(x)
+        output_class = output_class.view(-1, 6, self.output_size,)
+        output = self.combined_fc_layers(x)
+
+        return output, output_class
+
+
+class HybridModel_custom(nn.Module):
+    def __init__(
+        self,
+        num_numerical_features,
+        num_time_series_features,
+        hidden_size,
+        num_lstm_layers,
+        num_fc_tabular_layers,
+        num_fc_combined_layers,
+        output_size,
+        dropout,
+        ablation_TS=False,
+        ablation_tabular=False,
+        ablation_attention=False,
+    ):
+        super(HybridModel_custom, self).__init__()
+        
+        self.ablation_tabular = ablation_tabular
+        self.ablation_TS = ablation_TS
+        self.ablation_attention = ablation_attention
+
+        if not self.ablation_tabular:
+            # Static data branch
+            tabular_fc_layers = []
+            input_size = num_numerical_features
+            for _ in range(num_fc_tabular_layers):
+                tabular_fc_layers.append(nn.Linear(input_size, 128))
+                tabular_fc_layers.append(nn.ReLU())
+                input_size = 128
+            self.tabular_fc_layers = nn.Sequential(
+                *tabular_fc_layers, nn.Linear(128, 64), nn.ReLU()
+            )
+
+        if not self.ablation_TS:
+            # TS branch
+            self.lstm = nn.LSTM(
+                input_size=num_time_series_features,
+                hidden_size=hidden_size,
+                num_layers=num_lstm_layers,
+                dropout=dropout,
+                batch_first=True,
+            )
+
+            # Atenttion
+            self.attention = nn.Linear(hidden_size, 1)
+            self.dropout = nn.Dropout(dropout)
+
+        # Combined part
+        self.fc_after_context = nn.Linear(hidden_size, 64)
+        combined_fc_layers = []
+        if not self.ablation_tabular and not self.ablation_TS:
+            input_dim = 64 + 64  # Assuming 64 from tabular output and 64 from LSTM output after attention
+        else:
+            input_dim = 64
+        for _ in range(num_fc_combined_layers):
+            combined_fc_layers.append(nn.Linear(input_dim, 64))
+            combined_fc_layers.append(nn.ReLU())
+            input_dim = 64
+        self.combined_fc_layers = nn.Sequential(
+            *combined_fc_layers, nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, output_size)
+        )
+
+    def forward(self, time_series_data, numerical_data):
+        numerical_data = numerical_data.to(torch.float32)
+        time_series_data = time_series_data.to(torch.float32)
+        if not self.ablation_tabular:
+            # Pass the tabular data through FC layers
+            x1 = self.tabular_fc_layers(numerical_data)
+        if not self.ablation_TS:
+            # Pass the time series data through the LSTM
+            lstm_out, (hn, cn) = self.lstm(time_series_data)
+            # Pass the data through the attention mechanism
+            if not self.ablation_attention:
+                attention_weights = torch.softmax(self.attention(lstm_out), dim=1)
+                context_vector = torch.sum(attention_weights * lstm_out, dim=1)
+            else:
+                context_vector = lstm_out[:, -1, :]  # Last time step output
+            
+            droped_out = self.dropout(context_vector)
+            x2 = torch.relu(self.fc_after_context(droped_out))
+
+        # Concatenate the outputs from the tabular and the temporal data and pass it through FC layers
+        if not self.ablation_tabular and not self.ablation_TS:
+            x = torch.cat((x1, x2), dim=1)
+        elif not self.ablation_tabular:
+            x = x1
+        else:
+            x = x2
+        x = self.combined_fc_layers(x)
+        return x
