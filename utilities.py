@@ -138,7 +138,7 @@ def load_XY(
 ):
     """
     Load the data and create the X and y arrays.
-    Taken from https://www.pure.ed.ac.uk/ws/portalfiles/portal/217133242/DroughtED_MINIXHOFER_DOA18062021_AFV.pdf
+    Taken and midified from https://www.pure.ed.ac.uk/ws/portalfiles/portal/217133242/DroughtED_MINIXHOFER_DOA18062021_AFV.pdf
 
     Parameters
     ----------
@@ -283,7 +283,7 @@ def normalize(X_static, X_time, y_past=None, dicts=({},{},{}), fit=False):
     Normalize the data using a RobustScaler.
     """
     if fit and dicts != ({},{},{}):
-        raise ValueError("You're trying to fit the scalers and provide them at the same time")
+        raise ValueError("You're trying to fit the scalers and providing them at the same time")
 
     scaler_dict, scaler_dict_static, scaler_dict_past = dicts
 
@@ -421,9 +421,9 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
         scheduler
     """
     optimizer_name = trial.suggest_categorical(
-        "optimizer", ["Adam", "SGD", "RMSprop", "AdamW"]
+        "optimizer", ["Adam", "AdamW"]
     )
-    learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
+    learning_rate = trial.suggest_float("learning_rate", 1e-6, 1e-4, log=True)
 
     if optimizer_name == "Adam":
         optimizer = optim.Adam(model_params, lr=learning_rate)
@@ -432,20 +432,7 @@ def create_scheduler(trial, model_params, len_train_loader, num_epochs):
                                                         steps_per_epoch=len_train_loader,
                                                         epochs=num_epochs,
                                                         )
-    elif optimizer_name == "SGD":
-        optimizer = optim.SGD(model_params, lr=learning_rate)
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-                                                        max_lr=learning_rate,
-                                                        steps_per_epoch=len_train_loader,
-                                                        epochs=num_epochs,
-                                                        )
-    elif optimizer_name == "RMSprop":
-        optimizer = optim.RMSprop(model_params, lr=learning_rate)
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-                                                        max_lr=learning_rate,
-                                                        steps_per_epoch=len_train_loader,
-                                                        epochs=num_epochs,
-                                                        )
+
     elif optimizer_name == "AdamW":
         optimizer = optim.AdamW(model_params, lr=learning_rate)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,

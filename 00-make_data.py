@@ -36,15 +36,19 @@ def main():
         dfs = load_rawDataFrames()
         print("Preprocessing the dataFrames.")
 
-    X_tabular_train, X_tabular_cat_train, X_time_train, y_target_train, dict_trad, list_cat = load_XY(dfs=dfs, df_name="train")
+    X_tabular_train, X_tabular_cat_train, X_time_train, y_target_train, dict_trad, list_cat = load_XY(dfs=dfs,
+                                                                                                      df_name="train",
+                                                                                                      )
     print("train shape", X_time_train.shape)
     X_tabular_valid, X_tabular_cat_valid, X_time_valid, y_target_valid, valid_fips = load_XY(dfs=dfs, df_name="validation",
                                                                                              dict_trad=dict_trad,
-                                                                                             return_fips=True,)
+                                                                                             return_fips=True,
+                                                                                             )
     print("validation shape", X_time_valid.shape)
     X_tabular_test, X_tabular_cat_test, X_time_test, y_target_test, test_fips= load_XY(dfs=dfs, df_name="test",
                                                                                        dict_trad=dict_trad,
-                                                                                       return_fips=True,)
+                                                                                       return_fips=True,
+                                                                                       )
     print("test shape", X_time_test.shape)
     X_tabular_train, X_time_train, scaler_dicts = normalize(X_tabular_train, X_time_train, fit=True)
     X_tabular_valid, X_time_valid, _ = normalize(X_tabular_valid, X_time_valid, dicts=scaler_dicts)

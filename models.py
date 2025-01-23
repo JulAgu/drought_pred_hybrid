@@ -1,5 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class HybridModel(nn.Module):
     """
@@ -476,5 +480,105 @@ class HybridModel_custom(nn.Module):
             x = x1
         else:
             x = x2
+        x = self.combined_fc_layers(x)
+        return x
+
+class New_HybridModel(nn.Module):
+    """
+    The last version of the HybridModel, with the same architecture but smalle changes in the forward method and in the embeddings traitement.
+    """
+    def __init__(
+        self,
+        num_numerical_features,
+        num_time_series_features,
+        hidden_size,
+        num_lstm_layers,
+        list_unic_cat,
+        embedding_dims,
+        num_fc_tabular_layers,
+        num_fc_combined_layers,
+        output_size,
+        dropout,
+        ablation_TS=False,
+        ablation_tabular=False,
+        ablation_attention=False,
+    ):
+        super(New_HybridModel, self).__init__()
+        self.num_lstm_layers = num_lstm_layers
+        self.hidden_size = hidden_size
+
+        self.embeddings = nn.ModuleList(
+                [
+                    nn.Embedding(num_embeddings=i, embedding_dim=dimension)
+                    for i, dimension in zip(list_unic_cat, embedding_dims)
+                ]
+            )
+
+        self.after_embeddings = nn.Sequential(
+            nn.Linear(int(sum(embedding_dims)), 512), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(512, 256), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(256, 128), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 64), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(64, 16)
+        )
+
+        tabular_total_size = num_numerical_features + 16
+        tabular_fc_layers = []
+        for _ in range(num_fc_tabular_layers):
+            tabular_fc_layers.append(nn.Linear(tabular_total_size, tabular_total_size))
+            tabular_fc_layers.append(nn.ReLU())
+        self.tabular_fc_layers = nn.Sequential(
+            *tabular_fc_layers, nn.Linear(tabular_total_size, tabular_total_size)
+        )
+
+        # TS branch
+        self.lstm = nn.LSTM(
+            input_size=num_time_series_features,
+            hidden_size=hidden_size,
+            num_layers=num_lstm_layers,
+            batch_first=True,
+            dropout=dropout,
+        )
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.attention = nn.Linear(hidden_size, 1)
+        self.dropout = nn.Dropout(dropout)
+
+        combined_fc_layers = []
+        input_dim = tabular_total_size + hidden_size
+
+        for _ in range(num_fc_combined_layers):
+            combined_fc_layers.append(nn.Linear(input_dim, hidden_size))
+            combined_fc_layers.append(nn.ReLU())
+            input_dim = hidden_size
+        self.combined_fc_layers = nn.Sequential(
+            *combined_fc_layers, nn.Linear(hidden_size, output_size)
+        )
+
+    def forward(self, time_series_data, numerical_data, categorical_data):
+        batch_size = time_series_data.size(0)
+        h0 = torch.zeros(self.num_lstm_layers, batch_size, self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_lstm_layers, batch_size, self.hidden_size).to(device)
+
+        time_series_data = time_series_data.to(torch.float32)
+        numerical_data = numerical_data.to(torch.float32)
+        categorical_data = categorical_data.to(torch.int64)
+
+        embeddings = [emb(categorical_data[:, i]) for i, emb in enumerate(self.embeddings)]
+        x_cat = torch.cat(embeddings, dim=1)
+        x_cat = self.after_embeddings(x_cat)
+        x_tabular = torch.cat((x_cat, numerical_data), dim=1)
+        x1 = self.tabular_fc_layers(x_tabular)
+
+        # Pass the time series data through the LSTM and the attention mechanism
+        lstm_out, _ = self.lstm(time_series_data, (h0, c0))
+        lstm_out = self.layer_norm(lstm_out) # Apply layer normalization
+        attn_weights = F.softmax(self.attention(lstm_out), dim=1)
+        context_vector = torch.sum(attn_weights * lstm_out, dim=1)
+        # Pass the data through the attention mechanism
+        # context_vector = lstm_out[:, -1, :]  # Last time step output
+
+        # Combined MLPs and output
+        x2 = self.dropout(context_vector)
+        x = torch.cat((x1, x2), dim=1)
         x = self.combined_fc_layers(x)
         return x
