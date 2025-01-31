@@ -18,8 +18,8 @@ def ablation_study(ablation_tabular=False,
                    etiquette="",):
     
     # Fixing a seed to warrant the reproducibility
-    torch.manual_seed(33)
-    np.random.seed(33)
+    torch.manual_seed(42)
+    np.random.seed(42)
 
     # set up the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
